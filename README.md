@@ -331,7 +331,7 @@ AWS_PROFILE=<aws-profile> kubectl apply -f persistent-volume-claim.yaml
 
 Check the deployed storage resources states.
 ```
-AWS_PROFILE=aws-profile> kubectl get sc,pv,pvc -n jenkins
+AWS_PROFILE=<aws-profile> kubectl get sc,pv,pvc -n jenkins
 ```
 
 To delete the storage resources run following command.
@@ -509,6 +509,83 @@ Use simple routing policy.
 Enable evaluate target health.
 ```
 [Configuring Amazon Route 53 as your DNS service](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring.html)
+  
+  
+Better alternative, use [externalDNS](https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.1/guide/integrations/external_dns/) to setup and manage records in Route 53.
+
+Download [ExternalDNS IAM policy](https://github.com/kubernetes-sigs/external-dns/blob/master/docs/tutorials/aws.md#iam-permissions) and create AWSExternalDNSIAMPolicy.
+
+external-dns-policy.json
+```
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:ChangeResourceRecordSets"
+      ],
+      "Resource": [
+        "arn:aws:route53:::hostedzone/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:ListHostedZones",
+        "route53:ListResourceRecordSets"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}
+```
+
+Deploy the external-dns policy.
+```
+AWS_PROFILE=<aws-profile> aws iam create-policy \
+--policy-name AWSExternalDNSIAMPolicy \
+--policy-document file://external-dns-policy.json
+
+Save the output, Arn
+```
+
+Create IAM Role, k8s Service Account & Associate IAM Policy.
+```
+AWS_PROFILE=<aws-profile> eksctl create iamserviceaccount \
+  --region <region> \
+  --cluster <jenkins-cluster> \
+  --namespace kube-system \
+  --name aws-external-dns \
+  --attach-policy-arn arn:aws:iam::<aws-account-id>:policy/AWSExternalDNSIAMPolicy \
+  --approve 
+```
+
+Install external DNS  
+wget https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.0.0/docs/examples/external-dns.yaml
+
+Edit the external-dns.yaml file.  
+Add annotation for iamserviceaccount role created in previous step.
+```
+annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam:::<aws-account-id>:role/eksctl-jenkins-test-addon-iamserviceaccount-Role1-1GF8IUCBW6KM1
+```
+also, edit the arguments for Route53.
+```
+- --domain-filter # name of hosted zone, example.com
+- --aws-zone-type # public or private zone, empty means both zones
+# in case of txt record
+- --txt-owner-id # hosted zone id
+```
+
+Edit the ClusterRoleBinding namespace to kube-system instead of default.
+
+Deploy the external-dns configuration.
+```
+AWS_PROFILE=<aws-profile> kubectl apply -f external-dns.yaml -n kube-system
+```
 
 ### Proceed with AWS Autoscaler
 
