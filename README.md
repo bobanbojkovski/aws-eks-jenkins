@@ -587,6 +587,60 @@ Deploy the external-dns configuration.
 AWS_PROFILE=<aws-profile> kubectl apply -f external-dns.yaml -n kube-system
 ```
 
+Add ingress controller `external-dns` annotation to create Route53 record set.  
+In case a hostname in ingress controller is configured then a Route53 record should already exist and at this step the annotation is optional.
+```
+external-dns.alpha.kubernetes.io/hostname: <jenkins-hostname>
+```
+
+### Create SSL certificate using AWS ACM
+
+To request ACM certificate use [request-certificate](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/acm/request-certificate.html)  
+```
+AWS_PROFILE=<aws-profile> aws acm request-certificate \
+  --region <region> \
+  --domain-name <example.com> \
+  --validation-method DNS \
+  --idempotency-token 80acdc30 \
+  --subject-alternative-names <"*.example.com">
+  
+Save the CertificateArn
+```
+
+Add ingress ssl and external-dns annotaions in `values.yaml`.
+```
+alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+alb.ingress.kubernetes.io/certificate-arn: <CertificateArn>
+alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+
+external-dns.alpha.kubernetes.io/hostname: <jenkins-hostname>
+```
+
+Set redirection backend service, `serviceName: ssl-redirect` and `servicePort: use-annotation`.
+```
+paths:
+      - path: /*
+        backend:
+          serviceName: ssl-redirect
+          servicePort: use-annotation
+      - path:
+        backend:
+          serviceName: jenkins
+          servicePort: 8080
+```
+
+Also, update the path to redirect to jenkins backend.  
+After the ingress annotation snippet edit the `path`.
+```
+path: "/*"
+```
+
+Run helm upgrade command to apply the changes.
+```
+AWS_PROFILE=<aws-profile> helm upgrade jenkins -n jenkins jenkins/jenkins -f values.yaml
+```
+
+
 ### Proceed with AWS Autoscaler
 
 [Cluster Autoscaler](https://docs.aws.amazon.com/eks/latest/userguide/cluster-autoscaler.html)
